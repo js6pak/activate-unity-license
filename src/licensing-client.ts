@@ -3,6 +3,7 @@ import core = require('@actions/core');
 import exec = require('@actions/exec');
 import path = require('path');
 import fs = require('fs');
+import os = require('os');
 
 let client = undefined;
 
@@ -22,6 +23,98 @@ async function getLicensingClient(): Promise<string> {
     core.debug(`Unity Licensing Client Path: ${licenseClientPath}`);
     await fs.promises.access(licenseClientPath, fs.constants.X_OK);
     return licenseClientPath;
+}
+
+export async function PatchLicenseVersion(licenseVersion: string) {
+    if (licenseVersion === "" || licenseVersion === "6.x") {
+        return;
+    }
+
+    if (licenseVersion !== "5.x") {
+        throw new Error("Specified license version is unsupported");
+    }
+
+    if (!client) {
+        client = await getLicensingClient();
+    }
+    const clientDirectory = path.dirname(client);
+
+    const patchedDirectory = path.join(os.tmpdir(), "UnityLicensingClient-" + licenseVersion.replace(".", "_"));
+
+    if (await fs.promises.mkdir(patchedDirectory, { recursive: true }) === undefined) {
+        core.debug("Unity Licensing Client was already patched, reusing")
+    } else {
+        let found = false;
+        for (const fileName of await fs.promises.readdir(clientDirectory)) {
+            if (fileName === "Unity.Licensing.EntitlementResolver.dll") {
+                await patchBinary(
+                    path.join(clientDirectory, fileName), path.join(patchedDirectory, fileName),
+                    Buffer.from("6.x", "utf16le"),
+                    Buffer.from(licenseVersion, "utf16le"),
+                );
+                found = true;
+            } else {
+                await fs.promises.symlink(path.join(clientDirectory, fileName), path.join(patchedDirectory, fileName));
+            }
+        }
+
+        if (!found) {
+            throw new Error("Couldn't find Unity.Licensing.EntitlementResolver.dll in the unityhub installation");
+        }
+    }
+
+    client = path.join(patchedDirectory, path.basename(client));
+    core.debug(`Unity Licensing Client patched sucessfuly, new path: ${client}`);
+
+    const unityCommonDir = getUnityCommonDir();
+
+    const legacyLicenseFile = path.join(unityCommonDir, "Unity_v5.x.ulf");
+    if (!fs.existsSync(legacyLicenseFile)) {
+        await fs.promises.mkdir(unityCommonDir, { recursive: true });
+        await fs.promises.symlink(path.join(patchedDirectory, "Unity_lic.ulf"), legacyLicenseFile);
+    }
+
+    process.env["UNITY_COMMON_DIR"] = patchedDirectory;
+}
+
+async function patchBinary(src: string, dest: string, searchValue: Buffer, replaceValue: Buffer): Promise<void> {
+    const data = await fs.promises.readFile(src);
+
+    let modified = false;
+
+    for (let i = 0; i <= data.length - searchValue.length; i++) {
+        if (data.subarray(i, i + searchValue.length).equals(searchValue)) {
+            replaceValue.copy(data, i);
+            modified = true;
+            i += searchValue.length - 1;
+        }
+    }
+
+    if (!modified) {
+        throw new Error("Couldn't find the search value");
+    }
+
+    await fs.promises.writeFile(dest, data);
+}
+
+function getUnityCommonDir() {
+    const result = process.env["UNITY_COMMON_DIR"];
+    if (result) {
+        return result;
+    }
+
+    const platform = os.platform();
+    if (platform === "win32") {
+        const programData = process.env["PROGRAMDATA"] || "C:\\ProgramData";
+        return path.join(programData, "Unity");
+    } else if (platform === "darwin") {
+        return "/Library/Application Support/Unity";
+    } else if (platform === "linux") {
+        const dataHome = process.env["XDG_DATA_HOME"] || path.join(os.homedir(), ".local", "share");
+        return path.join(dataHome, "unity3d", "Unity");
+    }
+
+    throw new Error();
 }
 
 async function execWithMask(args: string[], attempt: number = 0): Promise<string> {
