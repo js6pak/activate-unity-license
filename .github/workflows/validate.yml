@@ -38,12 +38,12 @@ jobs:
           version-file: None
           unity-version: ${{ !matrix.skip-editor && matrix.unity-versions || 'None' }}
           modules: None
-      - uses: ./ # RageAgainstThePixel/action-activate-unity-license
-        with:
-          license: Personal
-          username: ${{ secrets.UNITY_USERNAME }}
-          password: ${{ secrets.UNITY_PASSWORD }}
-          license-version: ${{ matrix.license-version }}
+#      - uses: ./ # RageAgainstThePixel/action-activate-unity-license
+#        with:
+#          license: Personal
+#          username: ${{ secrets.UNITY_USERNAME }}
+#          password: ${{ secrets.UNITY_PASSWORD }}
+#          license-version: ${{ matrix.license-version }}
       - if: startsWith(matrix.os, 'ubuntu-') && !matrix.skip-editor
         run: |
           # Unity 2019.x
@@ -76,7 +76,7 @@ jobs:
           fi
 
       - if: ${{ !matrix.skip-editor }}
-        uses: RageAgainstThePixel/unity-action@v1
+        uses: js6pak/unity-action@main
         timeout-minutes: 10
         with:
           args: '-quit -nographics -batchmode -createProject "${{ github.workspace }}/Test Project"'
